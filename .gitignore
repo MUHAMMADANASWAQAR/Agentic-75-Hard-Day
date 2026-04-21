@@ -1,3 +1,4 @@
 # Ignore local environment secrets
 .env
 env/
+myenv/
