@@ -154,6 +154,19 @@
       margin-top: 6px;
       font-family: var(--mono);
     }
+
+    /* ── NAYA: cursor blink streaming ke dauran ── */
+    .bubble .stream-text { white-space: pre-wrap; }
+    .bubble .cursor {
+      display: inline-block;
+      width: 2px; height: 14px;
+      background: var(--accent);
+      margin-left: 2px;
+      vertical-align: middle;
+      animation: blink .7s step-end infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
     .typing .bubble { display: flex; gap: 5px; align-items: center; padding: 14px 18px; }
     .dot {
       width: 7px; height: 7px;
@@ -263,7 +276,7 @@
     <div class="avatar">🤖</div>
     <div class="header-info">
       <h1>AI Assistant</h1>
-      <p>Powered by LangGraph + GPT</p>
+      <p>Powered by LangGraph + GPT</p>  <!-- ← koi change nahi -->
     </div>
     <span id="thread-chip" title="Click to copy thread ID">thread: —</span>
     <button id="new-chat-btn">+ New Chat</button>
@@ -295,7 +308,10 @@
 <div id="toast"></div>
 
 <script>
-  const API_BASE = "http://localhost:8000";
+  // ── NAYA: streaming endpoint ──────────────────────────────────────────────
+  const API_BASE   = "http://localhost:8000";
+  const STREAM_URL = `${API_BASE}/chat/stream`;   // ← pehle /chat tha
+  // ─────────────────────────────────────────────────────────────────────────
 
   let threadId = generateThreadId();
   let busy = false;
@@ -309,29 +325,12 @@
 
   updateChip();
 
-  function generateThreadId() {
-    return "t-" + Math.random().toString(36).slice(2, 8);
-  }
-  function updateChip() {
-    chipEl.textContent = "thread: " + threadId;
-  }
-  function now() {
-    return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
-  function showToast(msg) {
-    toastEl.textContent = msg;
-    toastEl.classList.add("show");
-    setTimeout(() => toastEl.classList.remove("show"), 2200);
-  }
-  function removeWelcome() {
-    const w = msgsEl.querySelector(".welcome");
-    if (w) w.remove();
-  }
-  function escapeHtml(str) {
-    return str
-      .replace(/&/g,"&amp;").replace(/</g,"&lt;")
-      .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  }
+  function generateThreadId() { return "t-" + Math.random().toString(36).slice(2, 8); }
+  function updateChip()        { chipEl.textContent = "thread: " + threadId; }
+  function now()               { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  function showToast(msg)      { toastEl.textContent = msg; toastEl.classList.add("show"); setTimeout(() => toastEl.classList.remove("show"), 2200); }
+  function removeWelcome()     { const w = msgsEl.querySelector(".welcome"); if (w) w.remove(); }
+
   function appendMessage(role, text) {
     removeWelcome();
     const isUser = role === "user";
@@ -340,28 +339,37 @@
     div.innerHTML = `
       <div class="msg-avatar">${isUser ? "🧑" : "🤖"}</div>
       <div class="bubble">
-        ${escapeHtml(text).replace(/\n/g, "<br>")}
+        <span class="stream-text">${escapeHtml(text)}</span>
         <time>${now()}</time>
       </div>`;
     msgsEl.appendChild(div);
     msgsEl.scrollTop = msgsEl.scrollHeight;
+    return div;
   }
-  function showTyping() {
+
+  // ── NAYA: streaming bot bubble banata hai, tokens append karta rehta hai ──
+  function createBotBubble() {
     removeWelcome();
     const div = document.createElement("div");
-    div.className = "msg bot typing";
-    div.id = "typing-indicator";
+    div.className = "msg bot";
     div.innerHTML = `
       <div class="msg-avatar">🤖</div>
       <div class="bubble">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="stream-text"></span><span class="cursor"></span>
+        <time></time>
       </div>`;
     msgsEl.appendChild(div);
     msgsEl.scrollTop = msgsEl.scrollHeight;
+    return {
+      textEl:   div.querySelector(".stream-text"),
+      cursorEl: div.querySelector(".cursor"),
+      timeEl:   div.querySelector("time"),
+    };
   }
-  function hideTyping() {
-    const el = document.getElementById("typing-indicator");
-    if (el) el.remove();
+  // ─────────────────────────────────────────────────────────────────────────
+
+  function escapeHtml(str) {
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
 
   inputEl.addEventListener("input", () => {
@@ -393,6 +401,7 @@
     showToast("New chat — " + threadId);
   });
 
+  // ── NAYA: sendMessage ab SSE stream read karta hai ────────────────────────
   async function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || busy) return;
@@ -403,25 +412,61 @@
     inputEl.style.height = "auto";
 
     appendMessage("user", text);
-    showTyping();
+
+    // Bot bubble pehle se bana lo (khali)
+    const { textEl, cursorEl, timeEl } = createBotBubble();
 
     try {
-      const res = await fetch(`${API_BASE}/chat`, {
+      const res = await fetch(STREAM_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, thread_id: threadId }),
       });
-      hideTyping();
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        appendMessage("bot", "⚠️ Error: " + (err.detail || res.statusText));
-      } else {
-        const data = await res.json();
-        appendMessage("bot", data.reply);
+        textEl.textContent = "⚠️ Error: " + (err.detail || res.statusText);
+        cursorEl.remove();
+        timeEl.textContent = now();
+        return;
       }
+
+      // SSE lines read karo
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let   buffer  = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Har mukammal SSE line process karo
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // adhuri line buffer mein rakhni hai
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = JSON.parse(line.slice(6));
+
+          if (payload.token) {
+            // Token append karo — \n ko <br> nahi chahiye, pre-wrap hai
+            textEl.textContent += payload.token;
+            msgsEl.scrollTop = msgsEl.scrollHeight;
+          }
+
+          if (payload.done) {
+            cursorEl.remove();          // cursor hatao
+            timeEl.textContent = now(); // waqt dikha
+          }
+        }
+      }
+
     } catch (err) {
-      hideTyping();
-      appendMessage("bot", "⚠️ Could not reach the server. Make sure FastAPI is running on port 8000.");
+      textEl.textContent = "⚠️ Could not reach the server. Make sure FastAPI is running on port 8000.";
+      cursorEl.remove();
+      timeEl.textContent = now();
       console.error(err);
     } finally {
       busy = false;
@@ -429,6 +474,7 @@
       inputEl.focus();
     }
   }
+  // ─────────────────────────────────────────────────────────────────────────
 </script>
 </body>
 </html>
