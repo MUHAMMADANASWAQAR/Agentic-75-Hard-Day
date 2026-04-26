@@ -1,30 +1,4 @@
-"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║          ADVANCED LANGGRAPH + MCP SERVER INTEGRATION — FULL CODE            ║
-║                                                                              ║
-║  Architecture:                                                               ║
-║    MCP Server  ──►  LangGraph Agent  ──►  Tool Node  ──►  Response          ║
-║                                                                              ║
-║  What this file covers:                                                      ║
-║    1. MCP Server (FastMCP) — exposes tools over SSE                          ║
-║    2. MCP Client         — connects LangGraph to MCP server                  ║
-║    3. LangGraph State    — typed TypedDict state schema                      ║
-║    4. Graph Nodes        — agent node + tool execution node                  ║
-║    5. Conditional Edges  — route between agent ↔ tools ↔ END                ║
-║    6. Memory / Checkpointing                                                 ║
-║    7. Human-in-the-loop  — interrupt before tool execution                   ║
-║    8. Streaming output                                                        ║
-║    9. Runner (main)      — wires everything together                          ║
-╚══════════════════════════════════════════════════════════════════════════════╝
 
-Dependencies (install before running):
-    pip install langgraph langchain-anthropic langchain-mcp-adapters \
-                fastmcp httpx-sse python-dotenv
-"""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 0 — IMPORTS
-# ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
 import json
