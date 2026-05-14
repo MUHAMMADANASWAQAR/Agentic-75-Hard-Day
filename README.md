@@ -30,11 +30,10 @@ Install the dependencies needed for the day you are working on. Some notebooks a
 Do not commit real API keys. Use the example files as templates:
 
 ```text
-Day01/.env.example
-Day02/.env.example
+.env.example
 ```
 
-Copy an example file to `.env` inside the relevant day folder and fill in your local keys.
+Copy `.env.example` to `.env` and fill in your local keys.
 
 ## Git Notes
 
